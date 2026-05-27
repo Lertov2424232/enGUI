@@ -132,17 +132,34 @@ function on_tick(dt)
     end
 
     -- 3. Обработка ввода (Клавиатура)
+    --
+    -- В ядре scancode'ы PS/2 set 1: 0x2A/0x36 — make-коды LShift/RShift,
+    -- 0xAA/0xB6 — break-коды (отпускание). `getLastKey()` отдаёт
+    -- последний полученный байт и затем обнуляется.
+    --
+    -- Раньше здесь стояло `else: shift_pressed = false`, и состояние
+    -- Shift сбрасывалось на каждом тике, когда от ядра ничего не пришло.
+    -- ISR посылает 0x2A и затем 0x27 (для `;`) подряд за микросекунды,
+    -- но фрейм sysgui — это ~16 мс, и между ними мы успевали поставить
+    -- shift_pressed=false. В итоге Shift+; превращался в `;`, а не `:`,
+    -- и аналогично для всех остальных Shift-комбинаций.
+    --
+    -- Чиним: трекаем Shift по make/break-кодам напрямую и НЕ сбрасываем
+    -- его, когда `getLastKey() == 0`. Break-коды Shift не доходят до
+    -- handle_key окна (они и так не несут полезного символа).
     local key = getLastKey()
     if key > 0 then
-        if key == 42 or key == 54 then shift_pressed = true end
-        local char = scancodeToAscii(key, shift_pressed)
-
-        -- Просто отдаем событие активному окну, оно само знает, что делать
-        if focused_window and type(focused_window.handle_key) == "function" then
-            focused_window:handle_key(key, char)
+        if key == 42 or key == 54 then
+            shift_pressed = true
+        elseif key == 170 or key == 182 then -- 0xAA / 0xB6 — break Shift
+            shift_pressed = false
+        else
+            local char = scancodeToAscii(key, shift_pressed)
+            -- Просто отдаем событие активному окну
+            if focused_window and type(focused_window.handle_key) == "function" then
+                focused_window:handle_key(key, char)
+            end
         end
-    else
-        shift_pressed = false
     end
 
     -- 4. Отрисовка иконок рабочего стола
